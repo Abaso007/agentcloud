@@ -11,8 +11,7 @@ class MongoConnection:
 
     def connect(self) -> Optional[MongoClient]:
         try:
-            mongo_client = MongoClient(self.mongo_uri)
-            return mongo_client
+            return MongoClient(self.mongo_uri)
         except Exception as e:
             logging.exception(e)
             return None

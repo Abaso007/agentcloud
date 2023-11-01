@@ -15,8 +15,7 @@ class RedisConnection:
     def connect(self) -> redis:
         try:
             connection_pool = redis.ConnectionPool(host=self.redis_host, port=self.redis_port, db=0)
-            connection = redis.Redis(connection_pool=connection_pool)
-            return connection
+            return redis.Redis(connection_pool=connection_pool)
         except Exception as e:
             logging.exception(e)
             return None

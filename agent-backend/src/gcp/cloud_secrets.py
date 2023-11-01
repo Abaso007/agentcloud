@@ -20,5 +20,4 @@ def access_secret(secret_id: str, version_id: str = "latest"):
 
 
 if __name__ == '__main__':
-    print("Loading {} Module Individually".format(
-        __file__))
+    print(f"Loading {__file__} Module Individually")
