@@ -26,8 +26,7 @@ class Org:
     @property
     def _build_units(self):
         try:
-            code = self._load_template.render(session_id=self.session_id, **self.org)
-            return code
+            return self._load_template.render(session_id=self.session_id, **self.org)
         except Exception as e:
             logging.exception(e)
 

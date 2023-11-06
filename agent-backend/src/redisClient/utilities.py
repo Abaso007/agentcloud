@@ -22,12 +22,7 @@ class RedisClass(RedisConnection):
 
         """
         try:
-            redis_rule = self.redis_client.hlen(
-                hash_key)
-            if redis_rule:
-                return True
-            else:
-                return False
+            return bool(redis_rule := self.redis_client.hlen(hash_key))
         except Exception as e:
             logging.exception(e.args[0])
             logging.exception(traceback.format_exc())

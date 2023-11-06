@@ -38,9 +38,7 @@ def task_execution(task: str, session_id: str):
         try:
             # Use team structure to create AutGen team
             org = Org(session_id, team)
-            org_saved = org.save_org_structure()
-            # Execute task using above team
-            if org_saved:
+            if org_saved := org.save_org_structure():
                 module_name = f"orgs.{session_id}"
                 loaded_module = importlib.import_module(module_name)
                 _append_team_members_to_agent_system_message(loaded_module.groupchat, "Planner")

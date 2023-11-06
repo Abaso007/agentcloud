@@ -52,7 +52,7 @@ class MongoClientConnection(MongoConnection):
                 },
                 "roles": []
             }
-        list_of_agents = list()
+        list_of_agents = []
         query_results = self.collection.find_one({"_id": ObjectId(session_id)}, {"agents": 1})
         agents = query_results.get("agents")
         for agent in agents:
@@ -70,8 +70,7 @@ class MongoClientConnection(MongoConnection):
             agent_data["name"] = agent.get("name")
             agent_data["type"] = agent.get("type", "AssistantAgent")
             agent_data["llm_config"] = agent.get("llmConfig", "gpt4_config")
-            code_execution = agent.get("codeExecutionConfig")
-            if code_execution:
+            if code_execution := agent.get("codeExecutionConfig"):
                 print(f"Code execution: {code_execution}")
                 print(f"Last N messages: {code_execution.get('lastNMessages')}")
                 last_n_messages = code_execution.get("lastNMessages", 3)
