@@ -7,7 +7,6 @@ import { useAccountContext } from '../context/account';
 import AgentForm from './AgentForm';
 
 export default function CreateAgentModal({ open, setOpen, callback }) {
-
 	const [accountContext]: any = useAccountContext();
 	const { account, csrf } = accountContext as any;
 	const router = useRouter();
@@ -19,11 +18,11 @@ export default function CreateAgentModal({ open, setOpen, callback }) {
 	async function fetchAgentFormData() {
 		await API.getAgents({ resourceSlug }, dispatch, setError, router);
 	}
-	
+
 	useEffect(() => {
 		fetchAgentFormData();
 	}, []);
-	
+
 	return (
 		<Transition.Root show={open} as={Fragment}>
 			<Dialog as='div' className='relative z-50' onClose={setOpen}>
@@ -50,10 +49,13 @@ export default function CreateAgentModal({ open, setOpen, callback }) {
 							leaveFrom='opacity-100 translate-y-0 sm:scale-100'
 							leaveTo='opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95'
 						>
-							<Dialog.Panel className='relative transform overflow-hidden rounded-lg bg-white px-4 pb-4 pt-5 text-left shadow-xl transition-all sm:my-8 sm:p-6 overflow-visible md:min-w-[400px]'>
+							<Dialog.Panel className='relative transform overflow-hidden rounded-lg bg-white px-4 pb-4 pt-5 text-left shadow-xl transition-all sm:my-8 sm:p-6 md:min-w-[400px] dark:bg-slate-800 dark:text-gray-50 w-full max-w-2xl'>
 								<div>
 									<div className=''>
-										<Dialog.Title as='h3' className='mb-4 border-b pb-4 text-base font-semibold leading-6 text-gray-900'>
+										<Dialog.Title
+											as='h3'
+											className='mb-4 border-b pb-4 text-base font-semibold leading-6 text-gray-900 dark:text-gray-50'
+										>
 											Create an agent
 										</Dialog.Title>
 									</div>

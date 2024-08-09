@@ -2,7 +2,7 @@ from langchain.chains.query_constructor.schema import AttributeInfo
 from langchain.retrievers import SelfQueryRetriever as LC_SelfQueryRetriever
 from langchain_core.language_models import BaseLanguageModel
 from langchain_core.vectorstores import VectorStore
-from langchain.retrievers.self_query.qdrant import QdrantTranslator
+from langchain_community.query_constructors.qdrant import QdrantTranslator
 from langchain.chains.query_constructor.ir import (
     Comparator,
 )
@@ -74,7 +74,8 @@ class SelfQueryRetriever(BaseToolRetriever):
             vectorstore=vector_store,
             document_contents=tool.description,
             metadata_field_info=self.metadata_field_info,
-            verbose=True
+            verbose=True,
+            search_kwargs={'k': tool.retriever_config.k}
         )
         super().__init__()
 
@@ -83,11 +84,3 @@ class SelfQueryRetriever(BaseToolRetriever):
         query_result = super().perform_query(query)
         self.logger.info(f"query result: {query_result}")
         return query_result
-
-    def format_results(self, results):
-        self.logger.debug(f"{self.__class__.__name__} results: {results}")
-        return "\n".join(
-            map(lambda x: x if type(x) is str else str({
-                'data': x.page_content,
-                'metadata': x.metadata
-            }), results))

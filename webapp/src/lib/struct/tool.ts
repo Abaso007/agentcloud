@@ -22,36 +22,61 @@ export type SelfQueryRetrieverConfig = {
 };
 
 export type TimeWeightedRetrieverConfig = {
+	k?: number;
 	decay_rate?: number;
 };
 
+export type SimilaritySearchRetrieverConfig = {
+	k?: number;
+	//TODO: any specific configs?
+};
+
+export type MultiQueryRetrieverConfig = {
+	k?: number;
+	//TODO: any specific configs?
+};
+
 export type RetrieverConfig = SelfQueryRetrieverConfig | TimeWeightedRetrieverConfig;
+
+export enum ToolState {
+	PENDING = 'pending',
+	READY = 'ready',
+	ERROR = 'error'
+}
 
 export type Tool = {
 	_id?: ObjectId;
 	orgId?: ObjectId;
 	teamId?: ObjectId;
-    name: string;
-    description: string;
- 	type: ToolType;
- 	schema?: string;
- 	retriever_type?: Retriever;
+	name: string;
+	description: string;
+	type: ToolType;
+	schema?: string;
+	retriever_type?: Retriever;
 	retriever_config?: RetrieverConfig;
- 	datasourceId?: ObjectId;
+	datasourceId?: ObjectId;
+	state?: ToolState;
 	data?: {
+		runtime?: string;
 		builtin?: boolean;
 		name: string;
 		description?: string;
+		apiKey?: string;
+		environmentVariables?: Record<string, string>;
 		parameters?: {
 			//type: string;
-			properties: Record<string,FunctionProperty>;
+			properties: Record<string, FunctionProperty>;
 			required?: string[];
 		};
 		code?: string;
+		requirements?: string;
 		openAPIMatchKey?: string;
-	},
-	credentialId?: ObjectId; //links to a credential 
+	};
 	icon?: IconAttachment;
+	hidden?: boolean;
+	functionId?: string;
+	revisionId?: ObjectId;
+	functionLogs?: string;
 };
 
 export type FunctionProperty = {
@@ -60,9 +85,8 @@ export type FunctionProperty = {
 };
 
 export enum ToolType {
-	API_TOOL = 'api',
 	FUNCTION_TOOL = 'function',
-	RAG_TOOL = 'rag',
+	RAG_TOOL = 'rag'
 }
 
 export const ToolTypes = Object.values(ToolType);

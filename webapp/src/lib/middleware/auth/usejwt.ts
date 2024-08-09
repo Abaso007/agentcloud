@@ -9,11 +9,11 @@ const log = debug('webapp:middleware');
 export type JWTData = {
 	accountId: string;
 	email: string;
-}
+};
 
 export function verifyJwt(token): Promise<JWTData> {
 	return new Promise((res, rej) => {
-		jwt.verify(token, process.env.JWT_SECRET, function(err, decoded) {
+		jwt.verify(token, process.env.JWT_SECRET, function (err, decoded) {
 			if (err != null) {
 				res(null);
 			} else if (decoded != null) {
@@ -53,6 +53,7 @@ export default async function useJWT(req, res, next): Promise<void> {
 						stripe: account.stripe,
 						oauth: account.oauth,
 						permissions: account.permissions,
+						onboarded: account.onboarded
 					};
 					return next();
 				}
@@ -62,5 +63,5 @@ export default async function useJWT(req, res, next): Promise<void> {
 			next(e);
 		}
 	}
-  	next();
+	next();
 }

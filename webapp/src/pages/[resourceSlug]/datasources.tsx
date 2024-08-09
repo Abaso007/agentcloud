@@ -19,27 +19,29 @@ import { DatasourceStatus } from 'struct/datasource';
 import { NotificationType, WebhookType } from 'struct/notification';
 
 export default function Datasources(props) {
-
 	const [accountContext, refreshAccountContext]: any = useAccountContext();
 	const [, notificationTrigger]: any = useSocketContext();
-	
+
 	const { account, teamName } = accountContext as any;
-	const { stripePlan } = (account?.stripe||{});
+	const { stripePlan } = account?.stripe || {};
 	const router = useRouter();
 	const { resourceSlug } = router.query;
 	const [state, dispatch] = useState(props);
 	const [error, setError] = useState(null);
 	const { datasources, models } = state;
+	const filteredDatasources = datasources?.filter(x => !x.hidden);
 	const [open, setOpen] = useState(false);
 
-	async function fetchDatasources() {
+	async function fetchDatasources(silent = false) {
 		await API.getDatasources({ resourceSlug }, dispatch, setError, router);
 	}
 
 	useEffect(() => {
-		if (!notificationTrigger
-			|| (notificationTrigger?.type === NotificationType.Webhook
-				&& notificationTrigger?.details?.webhookType === WebhookType.SuccessfulSync)) {
+		if (
+			!notificationTrigger ||
+			(notificationTrigger?.type === NotificationType.Webhook &&
+				notificationTrigger?.details?.webhookType === WebhookType.SuccessfulSync)
+		) {
 			fetchDatasources();
 		}
 		fetchDatasources();
@@ -47,9 +49,11 @@ export default function Datasources(props) {
 	}, [resourceSlug, notificationTrigger]);
 
 	useEffect(() => {
-		if (!notificationTrigger
-			|| (notificationTrigger?.type === NotificationType.Webhook
-				&& notificationTrigger?.details?.webhookType === WebhookType.SuccessfulSync)) {
+		if (
+			!notificationTrigger ||
+			(notificationTrigger?.type === NotificationType.Webhook &&
+				notificationTrigger?.details?.webhookType === WebhookType.SuccessfulSync)
+		) {
 			fetchDatasources();
 		}
 	}, [notificationTrigger]);
@@ -57,11 +61,8 @@ export default function Datasources(props) {
 	//Backup polling for refresing while datasources are embedding, to supplement socket or fallback in case of failed socket connection
 	useEffect(() => {
 		const interval = setInterval(() => {
-			if (datasources && datasources.some(d => d?.status === DatasourceStatus.EMBEDDING)) {
-				//If there are any embedding datasources, refresh periodically
-				fetchDatasources();
-			}
-		}, 30000);
+			fetchDatasources();
+		}, 10000);
 		return () => {
 			clearInterval(interval);
 		};
@@ -71,41 +72,64 @@ export default function Datasources(props) {
 		return <Spinner />;
 	}
 
-	return (<>
+	return (
+		<>
+			<Head>
+				<title>{`Datasources - ${teamName}`}</title>
+			</Head>
 
-		<Head>
-			<title>{`Datasources - ${teamName}`}</title>
-		</Head>
+			<PageTitleWithNewButton list={filteredDatasources} title='File Uploads' />
 
-		<PageTitleWithNewButton list={datasources} title='File Uploads' />
+			<span className='pt-1 mb-3 w-full'>
+				<CreateDatasourceForm
+					models={models}
+					fetchDatasourceFormData={fetchDatasources}
+					hideTabs={true}
+					initialStep={1}
+					fetchDatasources={fetchDatasources}
+				/>
+			</span>
 
-		<span className='pt-1 mb-3 w-full'>
-			<CreateDatasourceForm models={models} fetchDatasourceFormData={fetchDatasources} hideTabs={true} initialStep={1} fetchDatasources={fetchDatasources} />
-		</span>
+			<DatasourceFileTable
+				datasources={filteredDatasources.filter(d => d?.sourceType === 'file')}
+				fetchDatasources={fetchDatasources}
+			/>
 
-		<DatasourceFileTable datasources={datasources.filter(d => d?.sourceType === 'file')} fetchDatasources={fetchDatasources} />
+			<span className='py-8 h-1'></span>
 
-		{/*(stripePlan && pricingMatrix[stripePlan].dataConnections) && <>*/}
-		<span className='py-8 h-1'></span>
+			<PageTitleWithNewButton
+				list={filteredDatasources}
+				title='Data Connections'
+				buttonText='New Connection'
+				onClick={() => setOpen(true)}
+			/>
 
-		<PageTitleWithNewButton list={datasources} title='Data Connections' buttonText='New Connection' onClick={() => setOpen(true)} />
+			<CreateDatasourceModal
+				open={open}
+				setOpen={setOpen}
+				callback={() => {
+					setOpen(false);
+					fetchDatasources();
+				}}
+				initialStep={2}
+			/>
 
-		<CreateDatasourceModal
-			open={open}
-			setOpen={setOpen}
-			callback={() => {
-				setOpen(false);
-				fetchDatasources();
-			}}
-		/>
+			<DatasourceTable
+				datasources={filteredDatasources.filter(d => d?.sourceType !== 'file')}
+				fetchDatasources={fetchDatasources}
+			/>
+		</>
+	);
+}
 
-		<DatasourceTable datasources={datasources.filter(d => d?.sourceType !== 'file')} fetchDatasources={fetchDatasources} />
-		{/*</>*/}
-
-	</>);
-
-};
-
-export async function getServerSideProps({ req, res, query, resolvedUrl, locale, locales, defaultLocale }) {
+export async function getServerSideProps({
+	req,
+	res,
+	query,
+	resolvedUrl,
+	locale,
+	locales,
+	defaultLocale
+}) {
 	return JSON.parse(JSON.stringify({ props: res?.locals?.data || {} }));
-};
+}

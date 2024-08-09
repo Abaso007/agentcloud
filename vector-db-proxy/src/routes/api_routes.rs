@@ -6,9 +6,9 @@ use actix_web_lab::extract::Path;
 use std::sync::Arc;
 
 use crate::errors::types::Result;
-use crate::qdrant::helpers::{get_next_page, get_scroll_results};
-use crate::qdrant::models::{CreateDisposition, MyPoint, PointSearchResults, ScrollResults};
-use crate::qdrant::utils::Qdrant;
+use crate::adaptors::qdrant::helpers::{get_next_page, get_scroll_results};
+use crate::adaptors::qdrant::models::{CreateDisposition, MyPoint, PointSearchResults, ScrollResults};
+use crate::adaptors::qdrant::utils::Qdrant;
 use crate::routes;
 use crate::utils::conversions::convert_hashmap_to_filters;
 
@@ -16,15 +16,14 @@ use qdrant_client::client::QdrantClient;
 use qdrant_client::prelude::*;
 use qdrant_client::qdrant::{Filter, PointId, PointStruct, ScrollPoints, WithVectorsSelector};
 
-use crate::mongo::client::start_mongo_connection;
-use crate::mongo::models::Model;
-use crate::mongo::queries::{get_embedding_model, get_embedding_model_and_embedding_key};
+use crate::adaptors::mongo::client::start_mongo_connection;
+use crate::adaptors::mongo::models::Model;
+use crate::adaptors::mongo::queries::{get_model, get_model_and_embedding_key};
 use qdrant_client::qdrant::point_id::PointIdOptions;
 use qdrant_client::qdrant::with_vectors_selector::SelectorOptions;
 use routes::models::{ResponseBody, SearchRequest, Status};
 use serde_json::json;
 use std::vec;
-use mongodb::Database;
 use tokio::sync::RwLock;
 use wherr::wherr;
 
@@ -62,8 +61,8 @@ pub async fn health_check() -> Result<impl Responder> {
 /// ```
 #[wherr]
 #[get("/list-collections")]
-pub async fn list_collections(app_data: Data<(Arc<RwLock<QdrantClient>>, Arc<RwLock<Database>>)>) -> Result<impl Responder> {
-    let (qdrant_conn, _) = app_data.get_ref().clone();
+pub async fn list_collections(app_data: Data<Arc<RwLock<QdrantClient>>>) -> Result<impl Responder> {
+    let qdrant_conn = app_data.get_ref().clone();
     let qdrant = Qdrant::new(qdrant_conn, String::from(""));
     let results = qdrant.get_list_of_collections().await?;
     Ok(HttpResponse::Ok()
@@ -92,14 +91,14 @@ pub async fn list_collections(app_data: Data<(Arc<RwLock<QdrantClient>>, Arc<RwL
 #[wherr]
 #[post("/check-collection-exists/{collection_name}")]
 pub async fn check_collection_exists(
-    app_data: Data<(Arc<RwLock<QdrantClient>>, Arc<RwLock<Database>>)>,
+    app_data: Data<Arc<RwLock<QdrantClient>>>,
     Path(collection_name): Path<String>,
 ) -> Result<HttpResponse> {
-    let (qdrant_conn, mongo_conn) = app_data.get_ref();
+    let qdrant_conn = app_data.get_ref();
     let collection_name_clone = collection_name.clone();
     let qdrant = Qdrant::new(qdrant_conn.to_owned(), collection_name);
-    let mongo = mongo_conn.read().await;
-    return match get_embedding_model_and_embedding_key(&mongo, &collection_name_clone)
+    let mongo = start_mongo_connection().await.unwrap();
+    return match get_model_and_embedding_key(&mongo, &collection_name_clone)
         .await
     {
         Ok((model_parameter_result, _)) => match model_parameter_result {
@@ -193,18 +192,18 @@ pub async fn check_collection_exists(
 #[wherr]
 #[post("/upsert-data-point/{collection_name}")]
 pub async fn upsert_data_point_to_collection(
-    app_data: Data<(Arc<RwLock<QdrantClient>>, Arc<RwLock<Database>>)>,
+    app_data: Data<Arc<RwLock<QdrantClient>>>,
     Path(collection_name): Path<String>,
     data: web::Json<MyPoint>,
 ) -> Result<impl Responder> {
-    let (qdrant_conn, _) = app_data.get_ref().clone();
+    let qdrant_conn = app_data.get_ref().clone();
     let points = PointStruct::new(
         data.index.to_owned(),
         data.vector.to_owned(),
         json!(data.payload).try_into().unwrap(),
     );
     let qdrant = Qdrant::new(qdrant_conn, collection_name);
-    let upsert_results = qdrant.upsert_data_point_non_blocking(points).await?;
+    let upsert_results = qdrant.upsert_data_points(points).await?;
     match upsert_results {
         true => Ok(HttpResponse::Ok()
             .content_type(ContentType::json())
@@ -243,11 +242,11 @@ pub async fn upsert_data_point_to_collection(
 #[wherr]
 #[post("/bulk-upsert-data/{collection_name}")]
 pub async fn bulk_upsert_data_to_collection(
-    app_data: Data<(Arc<RwLock<QdrantClient>>, Arc<RwLock<Database>>)>,
+    app_data: Data<Arc<RwLock<QdrantClient>>>,
     Path(collection_name): Path<String>,
     data: web::Json<Vec<MyPoint>>,
 ) -> Result<impl Responder> {
-    let (qdrant_conn, _) = app_data.get_ref().clone();
+    let qdrant_conn = app_data.get_ref().clone();
     let mut list_of_points: Vec<PointStruct> = vec![];
     for datum in data.0 {
         let point: PointStruct = PointStruct::new(
@@ -262,7 +261,7 @@ pub async fn bulk_upsert_data_to_collection(
     let mongodb_connection = start_mongo_connection().await.unwrap();
     let collection_name_clone_2 = collection_name.clone();
     let model_parameters: Model =
-        get_embedding_model(&mongodb_connection, collection_name_clone_2.as_str())
+        get_model(&mongodb_connection, collection_name_clone_2.as_str())
             .await
             .unwrap()
             .unwrap();
@@ -308,11 +307,11 @@ pub async fn bulk_upsert_data_to_collection(
 #[wherr]
 #[get("/lookup-data-point/{collection_name}")]
 pub async fn lookup_data_point(
-    app_data: Data<(Arc<RwLock<QdrantClient>>, Arc<RwLock<Database>>)>,
+    app_data: Data<Arc<RwLock<QdrantClient>>>,
     Path(collection_name): Path<String>,
     data: web::Json<SearchRequest>,
 ) -> Result<impl Responder> {
-    let (qdrant_conn, _) = app_data.get_ref().clone();
+    let qdrant_conn = app_data.get_ref().clone();
     let qdrant_conn_lock = qdrant_conn.read().await;
     let vector = data.clone().vector.unwrap_or(vec![]).to_vec();
     let (must, must_not, should) = convert_hashmap_to_filters(&data.filters);
@@ -366,11 +365,11 @@ pub async fn lookup_data_point(
 #[wherr]
 #[get("/scroll/{dataset_id}")]
 pub async fn scroll_data(
-    app_data: Data<(Arc<RwLock<QdrantClient>>, Arc<RwLock<Database>>)>,
+    app_data: Data<Arc<RwLock<QdrantClient>>>,
     Path(dataset_id): Path<String>,
     data: web::Query<SearchRequest>,
 ) -> Result<impl Responder> {
-    let (qdrant_conn, _) = app_data.get_ref().clone();
+    let qdrant_conn = app_data.get_ref();
     // Initialise lists
     let mut response: Vec<ScrollResults> = vec![];
     // Create a hash map of all filters provided by the client
@@ -444,11 +443,11 @@ pub async fn scroll_data(
 #[wherr]
 #[delete("/collection/{dataset_id}")]
 pub async fn delete_collection(
-    app_data: Data<(Arc<RwLock<QdrantClient>>, Arc<RwLock<Database>>)>,
+    app_data: Data<Arc<RwLock<QdrantClient>>>,
     Path(dataset_id): Path<String>,
 ) -> Result<impl Responder> {
     let dataset_id_clone = dataset_id.clone();
-    let (qdrant_conn, _) = app_data.get_ref();
+    let qdrant_conn = app_data.get_ref();
     let qdrant = Qdrant::new(Arc::clone(qdrant_conn), dataset_id_clone);
     match qdrant.delete_collection().await {
         Ok(()) => Ok(HttpResponse::Ok()
@@ -467,5 +466,48 @@ pub async fn delete_collection(
                         "errorMessage": format!("Collection: '{}' could not be delete due to error: '{}'", dataset_id, e)
                     }))
             }))),
+    }
+}
+#[wherr]
+#[get("/collection-info/{dataset_id}")]
+pub async fn get_collection_info(
+    app_data: Data<Arc<RwLock<QdrantClient>>>,
+    Path(dataset_id): Path<String>,
+) -> Result<impl Responder> {
+    let dataset_id_clone = dataset_id.clone();
+    let qdrant_conn = app_data.get_ref();
+    let qdrant = Qdrant::new(Arc::clone(qdrant_conn), dataset_id_clone);
+    match qdrant.get_collection_info().await {
+        Ok(Some(info)) => {
+            Ok(HttpResponse::Ok()
+                .content_type(ContentType::json())
+                .json(json!(ResponseBody {
+            status: Status::Success,
+            data: Some(json!(info)),
+            error_message: None
+        })))
+        }
+        Ok(None) => {
+            Ok(HttpResponse::NotFound()
+                .content_type(ContentType::json())
+                .json(json!(ResponseBody {
+                status: Status::Failure,
+                data: None,
+                error_message: Some(json!({
+                        "errorMessage": format!("Collection: '{}' returned no information", dataset_id)
+                    }))
+            })))
+        }
+        Err(e) => {
+            Ok(HttpResponse::BadRequest()
+                .content_type(ContentType::json())
+                .json(json!(ResponseBody {
+                status: Status::Failure,
+                data: None,
+                error_message: Some(json!({
+                        "errorMessage": format!("Collection: '{}' could not be delete due to error: '{}'", dataset_id, e)
+                    }))
+        })))
+        }
     }
 }

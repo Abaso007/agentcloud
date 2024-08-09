@@ -26,6 +26,10 @@ class Platforms(str, Enum):
     AzureChatOpenAI = "azure"
     FastEmbed = "fastembed"
     Ollama = "ollama"
+    GoogleVertex = "google_vertex"
+    Cohere = "cohere"
+    Anthropic = "anthropic"
+    Groq = "groq"
 
 
 class ModelVariant(str, Enum):
@@ -33,6 +37,15 @@ class ModelVariant(str, Enum):
     GPT4 = "gpt-4"
     GPT4TURBO = "gpt-4-1106-preview"
     GPT3TURBO = "gpt-3.5-turbo"
+    Gemini_1_Pro = "gemini-1.0-pro"
+    Gemini_1_5_Pro = "gemini-1.5-pro"
+    Gemini_1_5_Flash = "gemini-1.5-flash"
+    CommandRPlus = "command-r-plus"
+    Opus = "claude-3-opus-20240229"
+    Sonnet = "claude-3-sonnet-20240229"
+    Haiku = "claude-3-haiku-20240307"
+    LLaMA3_70b = "llama3-70b-8192"
+    Mixtral_8x7b = "mixtral-8x7b-32768"
 
 
 class FastEmbedModelsStandardFormat(str, Enum):
@@ -70,6 +83,7 @@ class ToolData(BaseModel):
     code: Optional[str] = None
     description: Optional[str] = None
     parameters: Optional[ToolParameters] = None
+    apiKey: Optional[str] = None
     builtin: bool
 
 
@@ -80,10 +94,12 @@ class Retriever(str, Enum):
     MULTI_QUERY = "multi_query"
 
 
+#TODO: figure out integer vs float vs number
+AllowedLiterals = Literal['string', 'integer', 'float', 'number', 'null']
 class MetadataFieldInfo(BaseModel):
     name: str
-    description: str
-    type: Literal["string", "integer", "float"]
+    description: Optional[str] = ""
+    type: Union[List[AllowedLiterals], AllowedLiterals]
 
 
 class SelfQueryRetrieverConfig(BaseModel):
@@ -101,10 +117,16 @@ class TimeWeightedRetrieverConfig(BaseModel):
 class CombinedRetrieverConfig(SelfQueryRetrieverConfig, TimeWeightedRetrieverConfig):
     pass
 
+class ToolState(str, Enum):
+	PENDING = 'pending'
+	READY = 'ready'
+	ERROR = 'error'
 
 class Tool(BaseModel):
     id: Optional[PyObjectId] = Field(alias="_id", default=None)
     model_config = ConfigDict(extra='ignore')
+    functionId: Optional[str] = None
+    state: Optional[ToolState] = None 
     name: str
     description: Optional[str] = None
     type: Optional[str] = "function"
@@ -137,8 +159,6 @@ class Model(BaseModel):
     name: str
     model_name: Optional[str] = Field(default=ModelVariant.GPT4, alias="model")
     modelType: ModelType
-    credentialId: Optional[PyObjectId] = None
-    credentials: Optional[PyObjectId] = None
     embeddingLength: Optional[int] = 384
     seed: Optional[int] = randint(1, 100)
     temperature: Optional[float] = 0
@@ -146,7 +166,7 @@ class Model(BaseModel):
     max_retries: Optional[int] = 10
     stream: Optional[bool] = True
     type: Optional[Platforms] = None
-    config: Optional[Dict] = None
+    config: Optional[Dict] = Field(default={})
 
 
 class ChatModel(BaseModel):
@@ -155,7 +175,7 @@ class ChatModel(BaseModel):
     api_key: Optional[str] = None
     model_name: Optional[ModelVariant] = Field(default=ModelVariant.GPT4, alias="model")
     seed: Optional[int] = randint(1, 100)
-    temperature: Optional[float] = 0
+    wtemperature: Optional[float] = 0
     timeout: Optional[int] = 300
     max_retries: Optional[int] = 10
     stream: Optional[bool] = True
@@ -185,7 +205,7 @@ class Task(BaseModel):
     toolIds: Optional[List[PyObjectId]] = None
     tools: Optional[Tool] = None
     asyncExecution: Optional[bool] = False
-    context: Optional[str] = None
+    context: Optional[List[PyObjectId]] = None
     outputJSON: Optional[BaseModel] = None
     outputPydantic: Optional[BaseModel] = None
     outputFile: Optional[str] = None
@@ -223,13 +243,14 @@ class Crew(BaseModel):
     process: Optional[Process] = Process.Sequential
     managerLLM: Optional[Model] = None
     functionCallingLLM: Optional[Callable] = None
-    verbose: Optional[bool] = False
+    verbose: Optional[Union[int, bool]] = False
     memory: Optional[bool] = False
     cache: Optional[bool] = False
     config: Optional[Dict] = {}
     maxRPM: Optional[int] = None
     language: Optional[str] = "en"
     fullOutput: Optional[bool] = False
+    full_output: Optional[bool] = Field(alias="fullOutput", defalut=False)
     stepCallback: Optional[Callable] = None
     shareCrew: Optional[bool] = False
     modelId: Optional[PyObjectId] = Field(alias="managerModelId", default=None)
@@ -239,6 +260,7 @@ class Session(BaseModel):
     id: Optional[PyObjectId] = Field(alias="_id", default=None)
     model_config = ConfigDict(extra='ignore')
     crewId: Crew
+    appId: Optional[PyObjectId] = None
 
 
 class Datasource(BaseModel):
@@ -255,12 +277,20 @@ class Datasource(BaseModel):
     connectionId: PyObjectId
     destinationId: PyObjectId
 
+
 class AppType(str, Enum):
     CHAT = "chat"
     PROCESS = "process"
+
+
+class ChatAppConfig(BaseModel):
+    agentId: PyObjectId
+    conversationStarters: list[str] = Field(default_factory=list)
 
 
 class App(BaseModel):
     id: Optional[PyObjectId] = Field(alias="_id", default=None)
     appType: Optional[AppType] = Field(default=None)
     crewId: Optional[PyObjectId] = Field(default=None)
+    chatAppConfig: Optional[ChatAppConfig] = None
+

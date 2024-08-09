@@ -3,14 +3,12 @@
 import { dynamicResponse } from '@dr';
 import { addAsset } from 'db/asset';
 import toObjectId from 'lib/misc/toobjectid';
-import withLogging from 'lib/misc/withlogging';
 import { ObjectId } from 'mongodb';
 import path from 'path';
 import StorageProviderFactory from 'storage/index';
 import { Asset } from 'struct/asset';
 
 export async function uploadAssetApi(req, res) {
-
 	if (!req.files || Object.keys(req.files).length === 0) {
 		return dynamicResponse(req, res, 400, { error: 'Invalid inputs' });
 	}
@@ -30,16 +28,14 @@ export async function uploadAssetApi(req, res) {
 		filename,
 		originalFilename: uploadedFile.name,
 		mimeType: uploadedFile.mimetype,
-		uploadedAt: new Date(),
+		uploadedAt: new Date()
 	};
 
-	const wrappedAddAsset = withLogging(addAsset, res.locals?.account?._id);
-	const addedAsset = await wrappedAddAsset(assetBody);
+	await addAsset(assetBody);
 	const storageProvider = StorageProviderFactory.getStorageProvider();
-	await storageProvider.addFile(filename, uploadedFile, true);
+	await storageProvider.uploadLocalFile(filename, uploadedFile, uploadedFile.mimetype, true);
 
 	return dynamicResponse(req, res, 200, assetBody);
-
 }
 
 //TODO: get, edit, delete, etc asset api

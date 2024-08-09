@@ -1,8 +1,8 @@
 use crate::data::models::{Document, Sentence};
 use crate::data::utils::percentile;
-use crate::llm::utils::embed_text;
-use crate::llm::{models::EmbeddingModels, utils::embed_text_chunks_async};
-use crate::mongo::models::ChunkingStrategy;
+use crate::embeddings::utils::embed_text;
+use crate::embeddings::{models::EmbeddingModels, utils::embed_text_chunks_async};
+use crate::adaptors::mongo::models::ChunkingStrategy;
 use anyhow::{anyhow, Result};
 use ndarray::Array1;
 use std::collections::HashMap;

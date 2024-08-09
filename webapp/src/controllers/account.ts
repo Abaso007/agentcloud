@@ -1,26 +1,33 @@
 'use strict';
 
 import { dynamicResponse } from '@dr';
-import Permission from '@permission';
-import getAirbyteApi, { AirbyteApiType } from 'airbyte/api';
+import { render } from '@react-email/components';
 import bcrypt from 'bcrypt';
+import {
+	Account,
+	changeAccountPassword,
+	getAccountByEmail,
+	getAccountById,
+	setCurrentTeam,
+	updateRoleAndMarkOnboarded,
+	verifyAccount
+} from 'db/account';
+import { getTeamWithModels } from 'db/team';
+import { addVerification, getAndDeleteVerification, VerificationTypes } from 'db/verification';
+import PasswordResetEmail from 'emails/PasswordReset';
 import jwt from 'jsonwebtoken';
 import createAccount from 'lib/account/create';
-import { ObjectId } from 'mongodb';
+import * as ses from 'lib/email/ses';
+import StripeClient from 'lib/stripe';
+import { chainValidations } from 'lib/utils/validationutils';
 import Permissions from 'permissions/permissions';
-import Roles from 'permissions/roles';
-import { SubscriptionPlan } from 'struct/billing';
-
-import { Account, changeAccountPassword, getAccountByEmail, getAccountById, setAccountPermissions, setCurrentTeam, setPlanDebug, verifyAccount } from '../db/account';
-import { addVerification, getAndDeleteVerification,VerificationTypes } from '../db/verification';
-import * as ses from '../lib/email/ses';
 
 export async function accountData(req, res, _next) {
 	return {
 		team: res.locals.matchingTeam,
-		csrf: req.csrfToken(),
+		csrf: req.csrfToken()
 	};
-};
+}
 
 /**
  * GET /account
@@ -42,6 +49,18 @@ export async function billingPage(app, req, res, next) {
 	return app.render(req, res, '/billing');
 }
 
+export async function onboardingPage(app, req, res, next) {
+	const data = await accountData(req, res, next);
+	res.locals.data = { ...data, account: res.locals.account };
+	return app.render(req, res, `/${req.params.resourceSlug}/onboarding`);
+}
+
+export async function configureModelsPage(app, req, res, next) {
+	const data = await accountData(req, res, next);
+	res.locals.data = { ...data, account: res.locals.account };
+	return app.render(req, res, `/${req.params.resourceSlug}/onboarding/configuremodels`);
+}
+
 /**
  * GET /account.json
  * account page json data
@@ -60,25 +79,54 @@ export async function accountJson(req, res, next) {
  * @apiParam {String} password Password of account.
  */
 export async function login(req, res) {
+	let validationError = chainValidations(
+		req.body,
+		[
+			{
+				field: 'email',
+				validation: { notEmpty: true, regexMatch: /^\S+@\S+\.\S+$/, ofType: 'string' }
+			},
+			{ field: 'password', validation: { notEmpty: true, lengthMin: 1, ofType: 'string' } }
+		],
+		{ email: 'Email', password: 'Password' }
+	);
+	if (validationError) {
+		return dynamicResponse(req, res, 400, { error: validationError });
+	}
 
 	const email = req.body.email.toLowerCase();
 	const password = req.body.password;
 	const account: Account = await getAccountByEmail(email);
 
-	if (!account) {
+	if (!account || (!account?.emailVerified && process.env.SKIP_EMAIL !== '1')) {
 		return dynamicResponse(req, res, 403, { error: 'Incorrect email or password' });
 	}
 
-	const passwordMatch = await bcrypt.compare(password, account.passwordHash);
+	try {
+		const passwordMatch = await bcrypt.compare(password, account.passwordHash);
 
-	if (passwordMatch === true) {
-		const token = await jwt.sign({ accountId: account._id }, process.env.JWT_SECRET); //jwt
-		req.session.token = token; //jwt (cookie)
-		return dynamicResponse(req, res, 302, { redirect: `/${account.currentTeam.toString()}/apps`, token });
+		if (passwordMatch === true) {
+			const token = await jwt.sign({ accountId: account._id }, process.env.JWT_SECRET); //jwt
+			req.session.token = token; //jwt (cookie)
+
+			if (account.onboarded === false) {
+				return dynamicResponse(req, res, 302, {
+					redirect: `/${account.currentTeam.toString()}/onboarding`,
+					token
+				});
+			}
+
+			return dynamicResponse(req, res, 302, {
+				redirect: `/${account.currentTeam.toString()}/apps`,
+				token
+			});
+		}
+	} catch (e) {
+		console.error(e);
+		return dynamicResponse(req, res, 403, { error: 'Incorrect email or password' });
 	}
 
 	return dynamicResponse(req, res, 403, { error: 'Incorrect email or password' });
-
 }
 
 /**
@@ -86,26 +134,40 @@ export async function login(req, res) {
  * regiser
  */
 export async function register(req, res) {
+	let validationError = chainValidations(
+		req.body,
+		[
+			{ field: 'name', validation: { notEmpty: true, ofType: 'string' } },
+			{
+				field: 'email',
+				validation: { notEmpty: true, regexMatch: /^\S+@\S+\.\S+$/, ofType: 'string' }
+			},
+			{ field: 'password', validation: { notEmpty: true, lengthMin: 1, ofType: 'string' } }
+		],
+		{ name: 'Name', email: 'Email', password: 'Password' }
+	);
+	if (validationError) {
+		return dynamicResponse(req, res, 400, { error: validationError });
+	}
 
 	const email = req.body.email.toLowerCase();
-	const name = req.body.name;
-	const password = req.body.password;
-
-	if (!email || typeof email !== 'string' || email.length === 0 || !/^\S+@\S+\.\S+$/.test(email)
-		|| !password || typeof password !== 'string' || password.length === 0
-		|| !name || typeof name !== 'string' || name.length === 0) {
-		return dynamicResponse(req, res, 400, { error: 'Invalid inputs' });
-	}
+	const { name, password } = req.body;
 
 	const existingAccount: Account = await getAccountByEmail(email);
 	if (existingAccount) {
 		return dynamicResponse(req, res, 409, { error: 'Account already exists with this email' });
 	}
 
-	const { emailVerified } = await createAccount(email, name, password);
-	
-	return dynamicResponse(req, res, 302, { redirect: emailVerified ? '/login?verifysuccess=true&noverify=1' : '/verify' });
+	const { emailVerified } = await createAccount({
+		email,
+		name,
+		password,
+		roleTemplate: 'TEAM_MEMBER'
+	});
 
+	return dynamicResponse(req, res, 302, {
+		redirect: emailVerified ? '/login?verifysuccess=true&noverify=1' : '/verify'
+	});
 }
 
 /**
@@ -123,27 +185,40 @@ export function logout(req, res) {
  */
 export async function requestChangePassword(req, res) {
 	const { email } = req.body;
-	if (!email || typeof email !== 'string' || email.length === 0 || !/^\S+@\S+\.\S+$/.test(email)) {
-		return dynamicResponse(req, res, 400, { error: 'Invalid email' });
+
+	let validationError = chainValidations(
+		req.body,
+		[
+			{
+				field: 'email',
+				validation: { notEmpty: true, regexMatch: /^\S+@\S+\.\S+$/, ofType: 'string' }
+			}
+		],
+		{ email: 'Email' }
+	);
+	if (validationError) {
+		return dynamicResponse(req, res, 400, { error: validationError });
 	}
+
 	const foundAccount = await getAccountByEmail(email);
 	if (foundAccount) {
-		addVerification(foundAccount._id, VerificationTypes.CHANGE_PASSWORD)
-			.then(verificationToken => {
-				ses.sendEmail({
-					from: process.env.FROM_EMAIL_ADDRESS,
-					bcc: null,
-					cc: null,
-					replyTo: null,
-					to: [email],
-					subject: 'Password reset verification',
-					body: `Somebody entered your email a password reset for agentcloud.
+		addVerification(foundAccount._id, VerificationTypes.CHANGE_PASSWORD).then(verificationToken => {
+			const emailBody = render(
+				PasswordResetEmail({
+					passwordResetURL: `${process.env.URL_APP}/changepassword?token=${verificationToken}`
+				})
+			);
 
-If this was you, click the link to reset your password: "${process.env.URL_APP}/changepassword?token=${verificationToken}"
-
-If you didn't request a password reset, you can safely ignore this email.`,
-				});
+			ses.sendEmail({
+				from: process.env.FROM_EMAIL_ADDRESS,
+				bcc: null,
+				cc: null,
+				replyTo: null,
+				to: [email],
+				subject: 'Password reset verification',
+				body: emailBody
 			});
+		});
 	}
 	return dynamicResponse(req, res, 302, { redirect: '/verify' });
 }
@@ -154,13 +229,21 @@ If you didn't request a password reset, you can safely ignore this email.`,
  */
 export async function changePassword(req, res) {
 	const { password, token } = req.body;
-	if (!token || typeof token !== 'string') {
-		return dynamicResponse(req, res, 400, { error: 'Invalid token' });
+	let validationError = chainValidations(
+		req.body,
+		[
+			{ field: 'token', validation: { notEmpty: true, lengthMin: 1, ofType: 'string' } },
+			{ field: 'password', validation: { notEmpty: true, lengthMin: 1, ofType: 'string' } }
+		],
+		{ name: 'Name', email: 'Email', password: 'Password' }
+	);
+	if (validationError) {
+		return dynamicResponse(req, res, 400, { error: validationError });
 	}
-	if (!password || typeof password !== 'string' || password.length === 0) {
-		return dynamicResponse(req, res, 400, { error: 'Invalid inputs' });
-	}
-	const deletedVerification = await getAndDeleteVerification(token, VerificationTypes.CHANGE_PASSWORD);
+	const deletedVerification = await getAndDeleteVerification(
+		token,
+		VerificationTypes.CHANGE_PASSWORD
+	);
 	if (!deletedVerification || !deletedVerification.token) {
 		return dynamicResponse(req, res, 400, { error: 'Invalid password reset token' });
 	}
@@ -174,24 +257,83 @@ export async function changePassword(req, res) {
  * logout
  */
 export async function verifyToken(req, res) {
-	if (!req.body || !req.body.token || typeof req.body.token !== 'string') {
-		return dynamicResponse(req, res, 400, { error: 'Invalid token' });
+	let validationError = chainValidations(
+		req.body,
+		[
+			{ field: 'token', validation: { ofType: 'string' } },
+			{ field: 'checkoutsession', validation: { ofType: 'string' } }
+		],
+		{ token: 'Token', checkoutsession: 'Checkout Session ID' }
+	);
+	if (validationError) {
+		return dynamicResponse(req, res, 400, { error: validationError });
 	}
-	const deletedVerification = await getAndDeleteVerification(req.body.token, VerificationTypes.VERIFY_EMAIL);
-	if (!deletedVerification || !deletedVerification.token) {
-		return dynamicResponse(req, res, 400, { error: 'Invalid token' });
+	const { password, token, checkoutsession } = req.body;
+	let deletedVerification;
+	if (token) {
+		deletedVerification = await getAndDeleteVerification(
+			req.body.token,
+			VerificationTypes.VERIFY_EMAIL
+		);
 	}
-	const foundAccount = await getAccountById(deletedVerification.accountId);
+	let accountId = deletedVerification?.accountId;
+	let stripeCustomerId;
+	let foundCheckoutSession;
+	if ((!deletedVerification || !deletedVerification?.token || !accountId) && checkoutsession) {
+		// StripeInvalidRequestError: Invalid string: 34cc47ea5d...bbe94fe52b; must be at most 66 characters
+		const checkoutSessionId = checkoutsession;
+		try {
+			foundCheckoutSession = await StripeClient.get().checkout.sessions.retrieve(checkoutSessionId);
+		} catch (e) {
+			return dynamicResponse(req, res, 400, { error: 'Invalid token' });
+		}
+		if (!foundCheckoutSession || foundCheckoutSession.status !== 'complete') {
+			return dynamicResponse(req, res, 400, { error: 'Invalid token' });
+		}
+		const stripeCustomerId = foundCheckoutSession?.customer;
+		// Retrieve customer details from Stripe
+		const stripeCustomer = await StripeClient.get().customers.retrieve(stripeCustomerId);
+		if (!stripeCustomer) {
+			return dynamicResponse(req, res, 400, { error: 'Customer not found' });
+		}
+		const { email } = stripeCustomer;
+		// Get the custom name field from metadata
+		const customName = foundCheckoutSession?.custom_fields?.length
+			? foundCheckoutSession.custom_fields[0]?.text?.value
+			: null;
+		if (customName) {
+			// Update the customer's name in Stripe with the custom name
+			await StripeClient.get().customers.update(stripeCustomerId, { name: customName });
+		}
+		const emailAccount = await getAccountByEmail(email);
+		if (emailAccount) {
+			return dynamicResponse(req, res, 400, { error: 'Account already exists' });
+		}
+		const { addedAccount } = await createAccount({
+			email,
+			name: customName || email, // fallback to emali if name not found on checkoutsession
+			password,
+			roleTemplate: 'TEAM_MEMBER',
+			checkoutSessionId
+		});
+		if (!addedAccount.insertedId) {
+			return dynamicResponse(req, res, 400, { error: 'Account creation error' });
+		}
+		return dynamicResponse(req, res, 200, {});
+	}
+	const foundAccount = await getAccountById(accountId);
+	if (!foundAccount) {
+		return dynamicResponse(req, res, 400, { error: 'Account already verified or not found' });
+	}
 	if (!foundAccount.passwordHash) {
-		const password = req.body.password;
 		if (!password || typeof password !== 'string' || password.length === 0) {
 			//Note: invite is invalidated at this point, but form is required so likelihood of legit issue is ~0
 			return dynamicResponse(req, res, 400, { error: 'Invalid inputs' });
 		}
 		const newPasswordHash = await bcrypt.hash(password, 12);
-		await changeAccountPassword(deletedVerification.accountId, newPasswordHash);
+		await changeAccountPassword(accountId, newPasswordHash);
 	}
-	await verifyAccount(deletedVerification.accountId);
+	await verifyAccount(accountId);
 	return dynamicResponse(req, res, 302, { redirect: '/login?verifysuccess=true' });
 }
 
@@ -200,13 +342,19 @@ export async function verifyToken(req, res) {
  * switch teams
  */
 export async function switchTeam(req, res, _next) {
-
-	const { orgId, teamId, redirect } = req.body;
-	if (!orgId || typeof orgId !== 'string'
-		|| !teamId || typeof teamId !== 'string'
-		|| (redirect && typeof redirect !== 'string')) {
-		return dynamicResponse(req, res, 400, { error: 'Invalid inputs' });
+	let validationError = chainValidations(
+		req.body,
+		[
+			{ field: 'orgId', validation: { notEmpty: true, hasLength: 24, ofType: 'string' } },
+			{ field: 'teamId', validation: { notEmpty: true, hasLength: 24, ofType: 'string' } }
+		],
+		{ orgId: 'Org ID', teamId: 'Team ID' }
+	);
+	if (validationError) {
+		return dynamicResponse(req, res, 400, { error: validationError });
 	}
+
+	const { orgId, teamId } = req.body;
 
 	const switchOrg = res.locals.account.orgs.find(o => o.id.toString() === orgId);
 	const switchTeam = switchOrg && switchOrg.teams.find(t => t.id.toString() === teamId);
@@ -214,54 +362,29 @@ export async function switchTeam(req, res, _next) {
 		return dynamicResponse(req, res, 400, { error: 'Invalid inputs' });
 	}
 
+	const canCreateModel = res.locals.permissions.get(Permissions.CREATE_MODEL);
+	const teamData = await getTeamWithModels(teamId);
+
 	await setCurrentTeam(res.locals.account._id, orgId, teamId);
 
-	return res.json({});
-
+	return res.json({ canCreateModel, teamData });
 }
 
-async function dockerLogsData(containerId) {
+export async function updateRole(req, res) {
+	const { role } = req.body;
+	const userId = res.locals.account._id;
+	await updateRoleAndMarkOnboarded(userId, role);
+	const canCreateModel = res.locals.permissions.get(Permissions.CREATE_MODEL);
 
-	const response = await fetch(`http://localhost:2375/containers/${containerId}/logs?stdout=true&stderr=true&timestamps=true`);
-	if (!response.ok) {
-		throw new Error(`Error fetching logs for container ${containerId}: ${response.statusText}`);
-	}
-	const data = await response.text();
-	return data.split('\n').filter(line => line).slice(-100);
+	const teamData = await getTeamWithModels(res.locals.account.currentTeam);
 
-}
-
-export async function dockerLogsJson(req, res, next) {
-
-	return res.json({});
-// 	const containersResponse = await fetch('http://localhost:2375/containers/json');
-// 	if (!containersResponse.ok) {
-// 		throw new Error(`Error fetching containers list: ${containersResponse.statusText}`);
-// 	}
-// 	const containers = await containersResponse.json();
-// 
-// 	// Fetch logs from all containers
-// 	const logsPromises = containers.map(container => dockerLogsData(container.Id));
-// 	const logsArrays = await Promise.all(logsPromises);
-// 
-// 	// Flatten, sort by timestamp, and then join back into a single string
-// 	const sortedLogs = logsArrays.flat().sort().join('\n');
-// 	return res.json({ logs: sortedLogs });
-
-}
-
-export async function adminApi(req, res, next) {
-
-	const { action } = req.body;
-
-	if (Object.values(SubscriptionPlan).includes(action)) {
-		setPlanDebug(res.locals.account._id, action);
-	} else {
-		const updatingPerms = new Permission(Roles.REGISTERED_USER.base64);
-		updatingPerms.set(Permissions.ROOT, action === 'Root');
-		setAccountPermissions(res.locals.account._id, updatingPerms);
+	if (canCreateModel && (!teamData.llmModel || !teamData.embeddingModel)) {
+		return dynamicResponse(req, res, 302, {
+			redirect: `/${res.locals.account.currentTeam.toString()}/onboarding/configuremodels`
+		});
 	}
 
-	return res.json({});
-
+	return dynamicResponse(req, res, 302, {
+		redirect: `/${res.locals.account.currentTeam.toString()}/apps`
+	});
 }

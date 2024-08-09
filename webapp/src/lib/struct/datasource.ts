@@ -7,17 +7,26 @@ export type DatasourceStream = {
 	name: string;
 };
 
+export enum DatasourceScheduleType {
+	CRON = 'cron',
+	MANUAL = 'manual'
+}
+
 export type DatasourceConnectionSettings = {
-	syncCatalog: any; //TODO
-	scheduleType: string; //TODO: allow scheduling
-	namespaceDefinition?: string;
-	namespaceFormat?: string | null;
-	nonBreakingSchemaUpdatesBehavior: string;
 	prefix: string | null;
 	name: string;
 	sourceId: string;
 	destinationId: string;
 	status: string; //TODO: enum to match airbyte api, and allow creating in paused state
+	configurations: any; //TODO
+	schedule?: {
+		scheduleType: DatasourceScheduleType;
+		cronExpression?: string;
+	};
+	dataResidency?: string;
+	namespaceDefinition?: string;
+	namespaceFormat?: string | null;
+	nonBreakingSchemaUpdatesBehavior: string;
 };
 
 export type DatasourceChunkStrategy = 'semantic' | 'character';
@@ -26,14 +35,14 @@ export enum DatasourceStatus {
 	DRAFT = 'draft', //connection test
 	PROCESSING = 'processing', //airybte -> vector db proxy for non file type only
 	EMBEDDING = 'embedding', //vector db proxy -> qdrant
-	READY = 'ready', //synced/embedded
+	READY = 'ready' //synced/embedded
 }
 
 export const datasourceStatusColors = {
 	[DatasourceStatus.DRAFT]: 'bg-yellow-500',
-	[DatasourceStatus.PROCESSING]: 'bg-orange-300',
+	[DatasourceStatus.PROCESSING]: 'bg-blue-300',
 	[DatasourceStatus.EMBEDDING]: 'bg-yellow-500',
-	[DatasourceStatus.READY]: 'bg-green-500',
+	[DatasourceStatus.READY]: 'bg-green-500'
 };
 
 export type DatasourceRecordCount = {
@@ -66,4 +75,7 @@ export type Datasource = {
 	embeddingField?: string;
 	timeWeightField?: string;
 	modelId?: ObjectId; //model id of embedding model in models collection
+	hidden?: boolean;
+	descriptionsMap?: Record<string, string>;
+	timeUnit?: string; //temp until we have a more robust way to limit cron frequency based on plan
 };
